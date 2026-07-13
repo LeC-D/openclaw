@@ -1,3 +1,4 @@
+import { asNullableRecord } from "@openclaw/normalization-core/record-coerce";
 import { extractText } from "../../lib/chat/message-extract.ts";
 import { normalizeLowercaseStringOrEmpty } from "../../lib/string-coerce.ts";
 
@@ -36,6 +37,11 @@ export function messageDisplaySignature(message: unknown): string | null {
   } catch {
     return null;
   }
+}
+
+export function historyMessageId(message: unknown): string | null {
+  const messageId = asNullableRecord(message)?.messageId;
+  return typeof messageId === "string" && messageId ? messageId : null;
 }
 
 export function preserveOptimisticTailMessages(

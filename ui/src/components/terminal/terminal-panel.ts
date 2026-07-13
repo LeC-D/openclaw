@@ -333,24 +333,14 @@ export class OpenClawTerminalPanel extends OpenClawLitElement {
     if (dock) {
       this.dock = dock;
     }
-    if (detail?.catalog) {
+    if (detail?.catalog || detail?.open === true) {
       if (!this.available) {
         return;
       }
       this.open = true;
       this.syncLayoutReservation();
       this.persistLayout();
-      void this.openSession(detail.catalog);
-      return;
-    }
-    if (detail?.open === true) {
-      if (!this.available) {
-        return;
-      }
-      this.open = true;
-      this.syncLayoutReservation();
-      this.persistLayout();
-      void this.restoreSessions();
+      void (detail.catalog ? this.openSession(detail.catalog) : this.restoreSessions());
       return;
     }
     this.toggle();

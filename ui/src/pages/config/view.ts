@@ -37,6 +37,7 @@ import {
 import { t } from "../../i18n/index.ts";
 import { handleTabListKeydown } from "../../lib/tab-list.ts";
 import type { RealtimeTalkInputDevice } from "../chat/realtime-talk-input.ts";
+import { renderSettingsSelectRow } from "./settings-select-row.ts";
 import {
   APPEARANCE_SETTINGS_TARGET_IDS,
   COMMUNICATION_SETTINGS_TARGET_IDS,
@@ -1098,52 +1099,25 @@ function renderChatPreferencesSection(props: ConfigProps) {
       </div>
       <p class="settings-section__desc">${t("configView.chatPrefs.hint")}</p>
       <div class="settings-group">
-        ${renderSettingsRow({
+        ${renderSettingsSelectRow({
           title: t("chat.sendShortcut"),
-          control: html`
-            <select
-              class="settings-select"
-              data-settings-send-shortcut
-              aria-label=${t("chat.sendShortcut")}
-              .value=${props.chatSendShortcut}
-              @change=${(event: Event) =>
-                props.setChatSendShortcut(
-                  normalizeChatSendShortcut((event.currentTarget as HTMLSelectElement).value),
-                )}
-            >
-              <option value="enter" ?selected=${props.chatSendShortcut === "enter"}>
-                ${t("chat.sendShortcutEnter")}
-              </option>
-              <option
-                value="modifier-enter"
-                ?selected=${props.chatSendShortcut === "modifier-enter"}
-              >
-                ${t("chat.sendShortcutModifierEnter")}
-              </option>
-            </select>
-          `,
+          value: props.chatSendShortcut,
+          setting: "send-shortcut",
+          options: [
+            { value: "enter", label: t("chat.sendShortcutEnter") },
+            { value: "modifier-enter", label: t("chat.sendShortcutModifierEnter") },
+          ],
+          onChange: (value) => props.setChatSendShortcut(normalizeChatSendShortcut(value)),
         })}
-        ${renderSettingsRow({
+        ${renderSettingsSelectRow({
           title: t("chat.catalogOpenTarget"),
-          control: html`
-            <select
-              class="settings-select"
-              data-settings-catalog-open-target
-              aria-label=${t("chat.catalogOpenTarget")}
-              .value=${props.catalogOpenTarget}
-              @change=${(event: Event) =>
-                props.setCatalogOpenTarget(
-                  normalizeCatalogOpenTarget((event.currentTarget as HTMLSelectElement).value),
-                )}
-            >
-              <option value="viewer" ?selected=${props.catalogOpenTarget === "viewer"}>
-                ${t("chat.catalogOpenTargetViewer")}
-              </option>
-              <option value="terminal" ?selected=${props.catalogOpenTarget === "terminal"}>
-                ${t("chat.catalogOpenTargetTerminal")}
-              </option>
-            </select>
-          `,
+          value: props.catalogOpenTarget,
+          setting: "catalog-open-target",
+          options: [
+            { value: "viewer", label: t("chat.catalogOpenTargetViewer") },
+            { value: "terminal", label: t("chat.catalogOpenTargetTerminal") },
+          ],
+          onChange: (value) => props.setCatalogOpenTarget(normalizeCatalogOpenTarget(value)),
         })}
         ${renderSettingsMicrophoneField(props)}
       </div>

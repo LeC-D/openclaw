@@ -12,22 +12,7 @@ export { formatValidationErrors, type ValidationError } from "./validation-error
 import { lazyCompile } from "./protocol-validator.js";
 export type { ProtocolValidator } from "./protocol-validator.js";
 export * from "./schema/worker-inference.js";
-export type {
-  SessionCatalog,
-  SessionCatalogCapabilities,
-  SessionCatalogDescriptor,
-  SessionCatalogHost,
-  SessionCatalogSession,
-  SessionCatalogTranscriptItem,
-  SessionsCatalogArchiveParams,
-  SessionsCatalogArchiveResult,
-  SessionsCatalogContinueParams,
-  SessionsCatalogContinueResult,
-  SessionsCatalogListParams,
-  SessionsCatalogListResult,
-  SessionsCatalogReadParams,
-  SessionsCatalogReadResult,
-} from "./schema/sessions-catalog.js";
+export type * from "./schema/sessions-catalog.js";
 import {
   AgentEventSchema,
   AuditActivityAgentRunV1Schema,

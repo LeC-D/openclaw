@@ -27,6 +27,8 @@ import {
 } from "./node-plugin-tool-snapshot.js";
 import {
   NodeInvokeStreamController,
+  type NodeInvokeProgressParams,
+  type NodeInvokeResultParams,
   type PendingInvoke,
   type PendingSystemRunEvent,
 } from "./node-registry.invoke-stream.js";
@@ -153,7 +155,6 @@ const SERIALIZED_EVENT_PAYLOAD = Symbol("openclaw.serializedEventPayload");
 const AUTHORIZED_SYSTEM_RUN_EVENT_GRACE_MS = 5 * 60 * 1000;
 const WEBSOCKET_OPEN_READY_STATE = 1;
 const SLOW_CONSUMER_CLOSE_CODE = 1008;
-const MAX_INVOKE_INPUT_BYTES = 16 * 1024;
 export type SerializedEventPayload = {
   readonly json: string;
   readonly [SERIALIZED_EVENT_PAYLOAD]: true;
@@ -210,6 +211,40 @@ export class NodeRegistry {
         invokeId: requestId,
         nodeId: pending.nodeId,
       });
+    },
+    isConnectionActive: (pending) => this.nodesById.get(pending.nodeId)?.connId === pending.connId,
+    sendInput: (invokeId, pending, seq, payloadJSON) => {
+      const node = this.nodesById.get(pending.nodeId);
+      return node
+        ? this.sendEventToSession(node, "node.invoke.input", {
+            id: invokeId,
+            nodeId: pending.nodeId,
+            seq,
+            payloadJSON,
+          })
+        : false;
+    },
+    onFailedResult: (pending) => {
+      if (pending.systemRunEvent) {
+        this.forgetAuthorizedSystemRunEvent({
+          nodeId: pending.nodeId,
+          connId: pending.connId,
+          ...pending.systemRunEvent,
+        });
+      }
+    },
+    disconnectPending: (pending) => {
+      if (pending.command === NODE_MCP_TOOLS_CALL_COMMAND) {
+        pending.resolve({
+          ok: false,
+          error: {
+            code: "MCP_SERVER_UNAVAILABLE",
+            message: "node host disconnected during MCP tool call",
+          },
+        });
+      } else {
+        pending.reject(new Error(`node disconnected (${pending.command})`));
+      }
     },
   });
   private authorizedSystemRunEvents = new Map<string, AuthorizedSystemRunEvent>();
@@ -380,26 +415,7 @@ export class NodeRegistry {
         this.publishActiveNodeContext();
       }
     }
-    for (const [id, pending] of this.pendingInvokes.entries()) {
-      if (pending.connId !== connId) {
-        continue;
-      }
-      this.invokeStreams.clearTimers(pending);
-      if (pending.command === NODE_MCP_TOOLS_CALL_COMMAND) {
-        // Preserve MCP's structured failure contract when transport loss wins
-        // the race; callers can degrade instead of seeing an opaque invoke error.
-        pending.resolve({
-          ok: false,
-          error: {
-            code: "MCP_SERVER_UNAVAILABLE",
-            message: "node host disconnected during MCP tool call",
-          },
-        });
-      } else {
-        pending.reject(new Error(`node disconnected (${pending.command})`));
-      }
-      this.pendingInvokes.delete(id);
-    }
+    this.invokeStreams.handleDisconnect(connId);
     for (const [key, event] of this.authorizedSystemRunEvents) {
       if (event.connId === connId) {
         this.authorizedSystemRunEvents.delete(key);
@@ -763,37 +779,10 @@ export class NodeRegistry {
 
   /** Send one ordered input frame to a pending streaming invoke. */
   sendInvokeInput(invokeId: string, payload: unknown): void {
-    const pending = this.pendingInvokes.get(invokeId);
-    if (!pending) {
-      throw new Error("node invoke is not pending");
-    }
-    const payloadJSON = JSON.stringify(payload);
-    if (Buffer.byteLength(payloadJSON, "utf8") > MAX_INVOKE_INPUT_BYTES) {
-      throw new Error("node invoke input exceeds 16 KiB");
-    }
-    const node = this.nodesById.get(pending.nodeId);
-    if (!node || node.connId !== pending.connId) {
-      throw new Error("node invoke connection is unavailable");
-    }
-    const sent = this.sendEventToSession(node, "node.invoke.input", {
-      id: invokeId,
-      nodeId: pending.nodeId,
-      seq: pending.nextInputSeq,
-      payloadJSON,
-    });
-    if (!sent) {
-      throw new Error("failed to send node invoke input");
-    }
-    pending.nextInputSeq += 1;
+    this.invokeStreams.sendInput(invokeId, payload);
   }
 
-  handleInvokeProgress(params: {
-    invokeId: string;
-    nodeId: string;
-    connId: string | undefined;
-    seq: number;
-    chunk: string;
-  }): boolean {
+  handleInvokeProgress(params: NodeInvokeProgressParams): boolean {
     return this.invokeStreams.handleProgress(params);
   }
 
@@ -946,38 +935,8 @@ export class NodeRegistry {
     return `${params.nodeId}\0${params.connId}\0${params.sessionKey ?? ""}\0${params.runId}`;
   }
 
-  handleInvokeResult(params: {
-    id: string;
-    nodeId: string;
-    connId: string | undefined;
-    ok: boolean;
-    payload?: unknown;
-    payloadJSON?: string | null;
-    error?: { code?: string; message?: string } | null;
-  }): boolean {
-    const pending = this.pendingInvokes.get(params.id);
-    if (!pending) {
-      return false;
-    }
-    if (pending.nodeId !== params.nodeId || pending.connId !== params.connId) {
-      return false;
-    }
-    this.invokeStreams.clearTimers(pending);
-    this.pendingInvokes.delete(params.id);
-    if (!params.ok && pending.systemRunEvent) {
-      this.forgetAuthorizedSystemRunEvent({
-        nodeId: pending.nodeId,
-        connId: pending.connId,
-        ...pending.systemRunEvent,
-      });
-    }
-    pending.resolve({
-      ok: params.ok,
-      payload: params.payload,
-      payloadJSON: params.payloadJSON ?? null,
-      error: params.error ?? null,
-    });
-    return true;
+  handleInvokeResult(params: NodeInvokeResultParams): boolean {
+    return this.invokeStreams.handleResult(params);
   }
 
   sendEvent(nodeId: string, event: string, payload?: unknown): boolean {

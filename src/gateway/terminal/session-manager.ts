@@ -6,6 +6,7 @@ import {
   type LocalTerminalBackendSpawner,
   type TerminalBackend,
 } from "./backend.js";
+import { TerminalOutputRing } from "./output-ring.js";
 
 /** Emits one terminal event frame to the single owning connection. */
 type TerminalEventSink = (connId: string, event: string, payload: unknown) => void;
@@ -59,43 +60,6 @@ const DEFAULT_SCROLLBACK_CHARS = 256 * 1024;
 const DEFAULT_MAX_DETACHED_SESSIONS = 8;
 /** Default grace period before a detached session is killed (seconds). */
 export const DEFAULT_TERMINAL_DETACH_SECONDS = 300;
-
-/**
- * Bounded ring of recent PTY output. Raw bytes, not a screen snapshot: after
- * head truncation a replay can start mid-escape-sequence; emulators recover on
- * the next full repaint (prompt, clear, resize-triggered redraw). A true
- * server-side VT snapshot would need a terminal emulator per session and is a
- * tracked follow-up.
- */
-class TerminalOutputRing {
-  private chunks: string[] = [];
-  private total = 0;
-
-  constructor(private readonly cap: number) {}
-
-  push(chunk: string): void {
-    if (chunk.length >= this.cap) {
-      this.chunks = [chunk.slice(chunk.length - this.cap)];
-      this.total = this.cap;
-      return;
-    }
-    this.chunks.push(chunk);
-    this.total += chunk.length;
-    // Evict whole chunks (PTY write granularity) so surviving data keeps its
-    // original boundaries; the ring may briefly dip below cap, never above.
-    while (this.total > this.cap && this.chunks.length > 1) {
-      const head = this.chunks.shift();
-      if (!head) {
-        break;
-      }
-      this.total -= head.length;
-    }
-  }
-
-  snapshot(): string {
-    return this.chunks.join("");
-  }
-}
 
 type TerminalSessionManagerOptions = {
   emit: TerminalEventSink;
