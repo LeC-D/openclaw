@@ -39,7 +39,7 @@ type GatewayBonjourAdvertiseOpts = {
 type BonjourCycle = Array<{ label: string; svc: CiaoService }>;
 
 type ServiceStateTracker = {
-  state: string;
+  state: CiaoService["serviceState"];
   sinceMs: number;
 };
 
@@ -71,6 +71,9 @@ const MAX_CONSECUTIVE_STUCK_STATE_RESTARTS = 1;
 // failures, which resets the consecutive counter. Bound total restarts too.
 const RESTART_WINDOW_MS = 30 * 60_000;
 const MAX_RESTARTS_IN_WINDOW = 5;
+const CIAO_ANNOUNCED_STATE = "announced" as CiaoService["serviceState"];
+const CIAO_PROBING_STATE = "probing" as CiaoService["serviceState"];
+const CIAO_ANNOUNCING_STATE = "announcing" as CiaoService["serviceState"];
 const CIAO_SELF_PROBE_RETRY_FRAGMENT =
   "failed probing with reason: Error: Can't probe for a service which is announced already.";
 
@@ -466,10 +469,10 @@ export async function startGatewayBonjourAdvertiser(
               `bonjour: ${label} name conflict resolved; newName=${JSON.stringify(name)}`,
             );
           });
-          svc.on("hostname-change", (hostname) => {
+          svc.on("hostname-change", (nextHostname) => {
             markConflictObserved(label, svc);
             logger.warn(
-              `bonjour: ${label} hostname conflict resolved; newHostname=${JSON.stringify(hostname)}`,
+              `bonjour: ${label} hostname conflict resolved; newHostname=${JSON.stringify(nextHostname)}`,
             );
           });
         } catch (err) {
@@ -545,7 +548,7 @@ export async function startGatewayBonjourAdvertiser(
         const nextState = svc.serviceState;
         const current = stateTracker.get(label);
         const nextEnteredAt =
-          current && current.state !== "announced" && nextState !== "announced"
+          current && current.state !== CIAO_ANNOUNCED_STATE && nextState !== CIAO_ANNOUNCED_STATE
             ? current.sinceMs
             : now;
         if (!current || current.state !== nextState || current.sinceMs !== nextEnteredAt) {
@@ -630,7 +633,7 @@ export async function startGatewayBonjourAdvertiser(
       for (const { label, svc } of cycle) {
         const now = Date.now();
         const state = svc.serviceState;
-        if (state === "announced") {
+        if (state === CIAO_ANNOUNCED_STATE) {
           consecutiveRestarts = 0;
           consecutiveStuckStateRestarts = 0;
           conflictTracker.delete(label);
@@ -643,7 +646,11 @@ export async function startGatewayBonjourAdvertiser(
           continue;
         }
         const tracked = stateTracker.get(label);
-        if (state !== "announced" && tracked && now - tracked.sinceMs >= STUCK_ANNOUNCING_MS) {
+        if (
+          state !== CIAO_ANNOUNCED_STATE &&
+          tracked &&
+          now - tracked.sinceMs >= STUCK_ANNOUNCING_MS
+        ) {
           void recreateAdvertiser(
             `service stuck in ${state} for ${now - tracked.sinceMs}ms (${serviceSummary(
               label,
@@ -653,7 +660,11 @@ export async function startGatewayBonjourAdvertiser(
           );
           return;
         }
-        if (state === "announced" || state === "probing" || state === "announcing") {
+        if (
+          state === CIAO_ANNOUNCED_STATE ||
+          state === CIAO_PROBING_STATE ||
+          state === CIAO_ANNOUNCING_STATE
+        ) {
           continue;
         }
 
