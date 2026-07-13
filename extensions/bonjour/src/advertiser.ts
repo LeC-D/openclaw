@@ -9,7 +9,7 @@ import os from "node:os";
 import type { CiaoService } from "@homebridge/ciao";
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 import { isTruthyEnvValue } from "openclaw/plugin-sdk/runtime-env";
-import { classifyCiaoProcessError, type CiaoProcessErrorClassification } from "./ciao.js";
+import * as ciao from "./ciao.js";
 import { formatBonjourError } from "./errors.js";
 
 const nodeRequire = createRequire(import.meta.url);
@@ -37,13 +37,13 @@ type GatewayBonjourAdvertiseOpts = {
 };
 
 type BonjourCycle = Array<{ label: string; svc: CiaoService }>;
-
 type ServiceStateTracker = {
   state: CiaoService["serviceState"];
   sinceMs: number;
 };
 
 type ConsoleLogFn = (...args: unknown[]) => void;
+type CiaoRecovery = ciao.CiaoProcessErrorClassification;
 type UncaughtExceptionHandler = (error: unknown) => boolean;
 type UnhandledRejectionHandler = (reason: unknown) => boolean;
 type ProcessUnhandledRejectionListener = (reason: unknown, promise: Promise<unknown>) => void;
@@ -71,9 +71,6 @@ const MAX_CONSECUTIVE_STUCK_STATE_RESTARTS = 1;
 // failures, which resets the consecutive counter. Bound total restarts too.
 const RESTART_WINDOW_MS = 30 * 60_000;
 const MAX_RESTARTS_IN_WINDOW = 5;
-const CIAO_ANNOUNCED_STATE = "announced" as CiaoService["serviceState"];
-const CIAO_PROBING_STATE = "probing" as CiaoService["serviceState"];
-const CIAO_ANNOUNCING_STATE = "announcing" as CiaoService["serviceState"];
 const CIAO_SELF_PROBE_RETRY_FRAGMENT =
   "failed probing with reason: Error: Can't probe for a service which is announced already.";
 
@@ -319,7 +316,7 @@ export async function startGatewayBonjourAdvertiser(
   };
   const restoreCiaoExecHidePatch = installCiaoWindowsExecHidePatch();
   let restoreConsoleLog: () => void = () => {};
-  let requestCiaoRecovery: ((classification: CiaoProcessErrorClassification) => void) | undefined;
+  let requestCiaoRecovery: ((classification: CiaoRecovery) => void) | undefined;
   let cleanupUnhandledRejection: (() => void) | undefined;
   let cleanupDirectUnhandledRejection: (() => void) | undefined;
   let cleanupUncaughtException: (() => void) | undefined;
@@ -339,7 +336,7 @@ export async function startGatewayBonjourAdvertiser(
     const { getResponder } = await import("@homebridge/ciao");
     restoreConsoleLog = installCiaoConsoleNoiseFilter();
     const handleCiaoProcessError = (reason: unknown): boolean => {
-      const classification = classifyCiaoProcessError(reason);
+      const classification = ciao.classifyCiaoProcessError(reason);
       if (!classification) {
         return false;
       }
@@ -487,7 +484,7 @@ export async function startGatewayBonjourAdvertiser(
       err: unknown,
       action: "failed" | "threw",
     ) {
-      const classification = classifyCiaoProcessError(err);
+      const classification = ciao.classifyCiaoProcessError(err);
       if (classification) {
         logger.warn(
           `bonjour: advertise ${action} with ciao ${classification.kind} (${serviceSummary(
@@ -548,7 +545,7 @@ export async function startGatewayBonjourAdvertiser(
         const nextState = svc.serviceState;
         const current = stateTracker.get(label);
         const nextEnteredAt =
-          current && current.state !== CIAO_ANNOUNCED_STATE && nextState !== CIAO_ANNOUNCED_STATE
+          current && !ciao.isAnnounced(current.state) && !ciao.isAnnounced(nextState)
             ? current.sinceMs
             : now;
         if (!current || current.state !== nextState || current.sinceMs !== nextEnteredAt) {
@@ -633,7 +630,7 @@ export async function startGatewayBonjourAdvertiser(
       for (const { label, svc } of cycle) {
         const now = Date.now();
         const state = svc.serviceState;
-        if (state === CIAO_ANNOUNCED_STATE) {
+        if (ciao.isAnnounced(state)) {
           consecutiveRestarts = 0;
           consecutiveStuckStateRestarts = 0;
           conflictTracker.delete(label);
@@ -646,11 +643,7 @@ export async function startGatewayBonjourAdvertiser(
           continue;
         }
         const tracked = stateTracker.get(label);
-        if (
-          state !== CIAO_ANNOUNCED_STATE &&
-          tracked &&
-          now - tracked.sinceMs >= STUCK_ANNOUNCING_MS
-        ) {
+        if (!ciao.isAnnounced(state) && tracked && now - tracked.sinceMs >= STUCK_ANNOUNCING_MS) {
           void recreateAdvertiser(
             `service stuck in ${state} for ${now - tracked.sinceMs}ms (${serviceSummary(
               label,
@@ -660,11 +653,7 @@ export async function startGatewayBonjourAdvertiser(
           );
           return;
         }
-        if (
-          state === CIAO_ANNOUNCED_STATE ||
-          state === CIAO_PROBING_STATE ||
-          state === CIAO_ANNOUNCING_STATE
-        ) {
+        if (ciao.isActiveState(state)) {
           continue;
         }
 

@@ -2,8 +2,15 @@
  * Ciao process-error classifier. It recognizes known noisy ciao failures so
  * the Bonjour plugin can suppress or repair expected mDNS lifecycle issues.
  */
+import type { CiaoService } from "@homebridge/ciao";
 import { collectErrorGraphCandidates } from "openclaw/plugin-sdk/error-runtime";
 import { formatBonjourError } from "./errors.js";
+
+type CiaoServiceState = CiaoService["serviceState"];
+
+const ANNOUNCED_STATE = "announced" as CiaoServiceState;
+const PROBING_STATE = "probing" as CiaoServiceState;
+const ANNOUNCING_STATE = "announcing" as CiaoServiceState;
 
 const CIAO_CANCELLATION_MESSAGE_RE = /^CIAO (?:ANNOUNCEMENT|PROBING) CANCELLED\b/u;
 const CIAO_INTERFACE_ASSERTION_MESSAGE_RE =
@@ -24,6 +31,14 @@ export type CiaoProcessErrorClassification =
   | { kind: "netmask-assertion"; formatted: string }
   | { kind: "self-probe"; formatted: string }
   | { kind: "interface-enumeration-failure"; formatted: string };
+
+export function isAnnounced(state: CiaoServiceState): boolean {
+  return state === ANNOUNCED_STATE;
+}
+
+export function isActiveState(state: CiaoServiceState): boolean {
+  return isAnnounced(state) || state === PROBING_STATE || state === ANNOUNCING_STATE;
+}
 
 /** Classify a ciao error/rejection chain into a known category. */
 export function classifyCiaoProcessError(reason: unknown): CiaoProcessErrorClassification | null {
