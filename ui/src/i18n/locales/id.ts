@@ -503,6 +503,8 @@ export const id: TranslationMap = {
     start: "Mulai sesi",
     starting: "Memulai…",
     createFailed: "Tidak dapat membuat sesi.",
+    createOutcomeUnknown:
+      "The Gateway changed while this session was starting. Check recent sessions before starting this task again.",
     catalogUnavailable: "Target sesi ini tidak tersedia.",
   },
   sessionsView: {

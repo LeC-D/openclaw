@@ -501,6 +501,8 @@ export const ko: TranslationMap = {
     start: "세션 시작",
     starting: "시작 중…",
     createFailed: "세션을 만들 수 없습니다.",
+    createOutcomeUnknown:
+      "The Gateway changed while this session was starting. Check recent sessions before starting this task again.",
     catalogUnavailable: "이 세션 대상을 사용할 수 없습니다.",
   },
   sessionsView: {

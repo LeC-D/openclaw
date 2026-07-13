@@ -493,6 +493,8 @@ export const zh_TW: TranslationMap = {
     start: "啟動工作階段",
     starting: "正在啟動…",
     createFailed: "無法建立工作階段。",
+    createOutcomeUnknown:
+      "The Gateway changed while this session was starting. Check recent sessions before starting this task again.",
     catalogUnavailable: "此工作階段目標無法使用。",
   },
   sessionsView: {
