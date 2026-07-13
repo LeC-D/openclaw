@@ -507,7 +507,7 @@ export const nl: TranslationMap = {
     starting: "Starten…",
     createFailed: "Kan de sessie niet maken.",
     createOutcomeUnknown:
-      "The Gateway changed while this session was starting. Check recent sessions before starting this task again.",
+      "De Gateway is gewijzigd terwijl deze sessie werd gestart. Controleer recente sessies voordat je deze taak opnieuw start.",
     catalogUnavailable: "Dit sessiedoel is niet beschikbaar.",
   },
   sessionsView: {

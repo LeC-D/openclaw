@@ -508,7 +508,7 @@ export const es: TranslationMap = {
     starting: "Iniciando…",
     createFailed: "No se pudo crear la sesión.",
     createOutcomeUnknown:
-      "The Gateway changed while this session was starting. Check recent sessions before starting this task again.",
+      "El Gateway cambió mientras se iniciaba esta sesión. Revisa las sesiones recientes antes de volver a iniciar esta tarea.",
     catalogUnavailable: "El destino de esta sesión no está disponible.",
   },
   sessionsView: {

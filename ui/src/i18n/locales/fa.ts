@@ -505,7 +505,7 @@ export const fa: TranslationMap = {
     starting: "در حال شروع…",
     createFailed: "امکان ایجاد نشست وجود نداشت.",
     createOutcomeUnknown:
-      "The Gateway changed while this session was starting. Check recent sessions before starting this task again.",
+      "هنگام شروع این نشست، Gateway تغییر کرد. پیش از شروع دوبارهٔ این کار، نشست‌های اخیر را بررسی کنید.",
     catalogUnavailable: "مقصد این نشست در دسترس نیست.",
   },
   sessionsView: {

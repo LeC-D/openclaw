@@ -505,7 +505,7 @@ export const uk: TranslationMap = {
     starting: "Запуск…",
     createFailed: "Не вдалося створити сеанс.",
     createOutcomeUnknown:
-      "The Gateway changed while this session was starting. Check recent sessions before starting this task again.",
+      "Gateway змінився під час запуску цього сеансу. Перевірте нещодавні сеанси, перш ніж знову запускати це завдання.",
     catalogUnavailable: "Ціль цього сеансу недоступна.",
   },
   sessionsView: {

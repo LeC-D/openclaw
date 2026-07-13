@@ -506,7 +506,7 @@ export const pl: TranslationMap = {
     starting: "Uruchamianie…",
     createFailed: "Nie udało się utworzyć sesji.",
     createOutcomeUnknown:
-      "The Gateway changed while this session was starting. Check recent sessions before starting this task again.",
+      "Gateway zmienił się podczas uruchamiania tej sesji. Sprawdź ostatnie sesje przed ponownym uruchomieniem tego zadania.",
     catalogUnavailable: "Wybrany cel sesji jest niedostępny.",
   },
   sessionsView: {

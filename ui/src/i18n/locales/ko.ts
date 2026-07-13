@@ -502,7 +502,7 @@ export const ko: TranslationMap = {
     starting: "시작 중…",
     createFailed: "세션을 만들 수 없습니다.",
     createOutcomeUnknown:
-      "The Gateway changed while this session was starting. Check recent sessions before starting this task again.",
+      "이 세션을 시작하는 동안 Gateway가 변경되었습니다. 이 작업을 다시 시작하기 전에 최근 세션을 확인하세요.",
     catalogUnavailable: "이 세션 대상을 사용할 수 없습니다.",
   },
   sessionsView: {
