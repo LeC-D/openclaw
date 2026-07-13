@@ -1,5 +1,6 @@
 /* @vitest-environment jsdom */
 
+import { render, type TemplateResult } from "lit";
 import { describe, expect, it, vi } from "vitest";
 import type {
   SessionCatalogSession,
@@ -18,6 +19,7 @@ import type { SessionCapability } from "../../lib/sessions/index.ts";
 import "./chat-pane.ts";
 import { loadChatHistory } from "./chat-history.ts";
 import type { ChatPageHost } from "./chat-state.ts";
+import { createBackgroundTasksProps } from "./components/chat-background-tasks.ts";
 import { createSessionWorkspaceProps } from "./components/chat-session-workspace.ts";
 import type { SidebarContent } from "./components/chat-sidebar.ts";
 
@@ -57,6 +59,10 @@ type TestChatPane = HTMLElement & {
   olderCursorsSeen: Set<string>;
   olderOffsetsSeen: Set<number>;
   nativeHistoryExpanded: boolean;
+  renderPaneHeader: (
+    workspace: ReturnType<typeof createSessionWorkspaceProps>,
+    tasks: ReturnType<typeof createBackgroundTasksProps>,
+  ) => TemplateResult;
 };
 
 const suggestion: TaskSuggestion = {
@@ -319,6 +325,45 @@ describe("chat pane session creation lifecycle", () => {
 });
 
 describe("chat pane catalog session lifecycle", () => {
+  it("shows the eligible catalog terminal action and dispatches its typed reference", () => {
+    const client = { request: vi.fn() } as unknown as GatewayBrowserClient;
+    const { pane, state } = createTestChatPane({ client, sessions: {} as SessionCapability });
+    const key = {
+      catalogId: "codex",
+      hostId: "gateway:local",
+      threadId: "thread-101",
+    } satisfies CatalogSessionKey;
+    state.sessionKey = buildCatalogSessionKey(key);
+    state.terminalAvailable = true;
+    pane.catalogSession = {
+      threadId: key.threadId,
+      status: "idle",
+      archived: false,
+      canContinue: true,
+      canArchive: true,
+      canOpenTerminal: true,
+    };
+    const container = document.createElement("div");
+    render(
+      pane.renderPaneHeader(
+        createSessionWorkspaceProps(state),
+        createBackgroundTasksProps(state, { onOpenSession: () => {} }),
+      ),
+      container,
+    );
+    let detail: unknown;
+    const listener = (event: Event) => {
+      detail = (event as CustomEvent).detail;
+    };
+    window.addEventListener("openclaw:terminal-toggle", listener);
+    try {
+      (container.querySelector('[aria-label="Open in terminal"]') as HTMLElement).click();
+    } finally {
+      window.removeEventListener("openclaw:terminal-toggle", listener);
+    }
+    expect(detail).toEqual({ open: true, catalog: key });
+  });
+
   it("finds continuation metadata on a later catalog page", async () => {
     const key = {
       catalogId: "codex",

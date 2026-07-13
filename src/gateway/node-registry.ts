@@ -153,6 +153,7 @@ const SERIALIZED_EVENT_PAYLOAD = Symbol("openclaw.serializedEventPayload");
 const AUTHORIZED_SYSTEM_RUN_EVENT_GRACE_MS = 5 * 60 * 1000;
 const WEBSOCKET_OPEN_READY_STATE = 1;
 const SLOW_CONSUMER_CLOSE_CODE = 1008;
+const MAX_INVOKE_INPUT_BYTES = 16 * 1024;
 export type SerializedEventPayload = {
   readonly json: string;
   readonly [SERIALIZED_EVENT_PAYLOAD]: true;
@@ -672,6 +673,8 @@ export class NodeRegistry {
     onProgress?: (chunk: string) => void;
     signal?: AbortSignal;
     idempotencyKey?: string;
+    /** Receives the id synchronously after send; the terminal relay depends on this timing. */
+    onInvokeId?: (invokeId: string) => void;
   }): Promise<NodeInvokeResult> {
     if (params.signal?.aborted) {
       return { ok: false, error: { code: "ABORTED", message: "node invoke cancelled" } };
@@ -705,25 +708,11 @@ export class NodeRegistry {
       timeoutMs,
       idempotencyKey: params.idempotencyKey,
     };
-    const ok = this.sendEventToSession(node, "node.invoke.request", payload);
-    if (!ok) {
-      return {
-        ok: false,
-        error: { code: "UNAVAILABLE", message: "failed to send invoke to node" },
-      };
-    }
     const systemRunEvent = resolvePendingSystemRunEvent({
       command: params.command,
       params: invokeParams,
     });
-    if (systemRunEvent) {
-      this.rememberAuthorizedSystemRunEvent({
-        nodeId: params.nodeId,
-        connId: node.connId,
-        ...systemRunEvent,
-      });
-    }
-    return await new Promise<NodeInvokeResult>((resolve, reject) => {
+    const result = new Promise<NodeInvokeResult>((resolve, reject) => {
       const pending: PendingInvoke = {
         nodeId: params.nodeId,
         connId: node.connId,
@@ -733,6 +722,7 @@ export class NodeRegistry {
         reject,
         nextProgressSeq: 0,
         progressChunks: new Map(),
+        nextInputSeq: 0,
         ...(params.onProgress ? { onProgress: params.onProgress } : {}),
       };
       const idleTimeoutMs = resolveTimerTimeoutMs(params.idleTimeoutMs, 0, 0);
@@ -744,6 +734,57 @@ export class NodeRegistry {
         ...(params.signal ? { signal: params.signal } : {}),
       });
     });
+    if (!this.pendingInvokes.has(requestId)) {
+      return await result;
+    }
+    const ok = this.sendEventToSession(node, "node.invoke.request", payload);
+    if (!ok) {
+      const pending = this.pendingInvokes.get(requestId);
+      if (pending) {
+        this.invokeStreams.clearTimers(pending);
+        this.pendingInvokes.delete(requestId);
+        pending.resolve({
+          ok: false,
+          error: { code: "UNAVAILABLE", message: "failed to send invoke to node" },
+        });
+      }
+      return await result;
+    }
+    if (systemRunEvent) {
+      this.rememberAuthorizedSystemRunEvent({
+        nodeId: params.nodeId,
+        connId: node.connId,
+        ...systemRunEvent,
+      });
+    }
+    params.onInvokeId?.(requestId);
+    return await result;
+  }
+
+  /** Send one ordered input frame to a pending streaming invoke. */
+  sendInvokeInput(invokeId: string, payload: unknown): void {
+    const pending = this.pendingInvokes.get(invokeId);
+    if (!pending) {
+      throw new Error("node invoke is not pending");
+    }
+    const payloadJSON = JSON.stringify(payload);
+    if (Buffer.byteLength(payloadJSON, "utf8") > MAX_INVOKE_INPUT_BYTES) {
+      throw new Error("node invoke input exceeds 16 KiB");
+    }
+    const node = this.nodesById.get(pending.nodeId);
+    if (!node || node.connId !== pending.connId) {
+      throw new Error("node invoke connection is unavailable");
+    }
+    const sent = this.sendEventToSession(node, "node.invoke.input", {
+      id: invokeId,
+      nodeId: pending.nodeId,
+      seq: pending.nextInputSeq,
+      payloadJSON,
+    });
+    if (!sent) {
+      throw new Error("failed to send node invoke input");
+    }
+    pending.nextInputSeq += 1;
   }
 
   handleInvokeProgress(params: {

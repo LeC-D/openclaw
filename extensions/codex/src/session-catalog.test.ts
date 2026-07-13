@@ -16,6 +16,7 @@ import {
 } from "./app-server/session-binding.test-helpers.js";
 import {
   CODEX_LOCAL_SESSION_HOST_ID,
+  CODEX_TERMINAL_RESUME_COMMAND,
   codexSessionCatalogRuntime,
   createCodexSessionCatalogControl,
   createCodexSessionCatalogNodeHostCommands,
@@ -963,6 +964,22 @@ describe("Codex supervision catalog", () => {
       sortDirection: "desc",
       itemsView: "full",
     });
+  });
+
+  it("rejects malformed terminal resume thread ids before spawning", async () => {
+    const command = createCodexSessionCatalogNodeHostCommands(createEligibleControl()).find(
+      (candidate) => candidate.command === CODEX_TERMINAL_RESUME_COMMAND,
+    );
+    if (!command || command.duplex !== true) {
+      throw new Error("Codex terminal command was not registered as duplex");
+    }
+    await expect(
+      command.handle(JSON.stringify({ threadId: "not-a-uuid", cols: 80, rows: 24 }), {
+        signal: new AbortController().signal,
+        emitChunk: async () => {},
+        onInput: () => {},
+      }),
+    ).rejects.toThrow("threadId must be a UUID");
   });
 
   it("rejects an oversized transcript page before returning it over node.invoke", async () => {
@@ -2628,6 +2645,69 @@ describe("Codex supervision actions", () => {
     expect(control.readThread).toHaveBeenCalledOnce();
     expect(control.archiveThread).toHaveBeenCalledOnce();
     expect(createSessionEntry).not.toHaveBeenCalled();
+  });
+
+  it("builds local and paired-node terminal plans from verified catalog records", async () => {
+    const threadId = "123e4567-e89b-12d3-a456-426614174000";
+    const control = createEligibleControl({
+      listPage: vi.fn(async () => ({
+        sessions: [
+          { threadId, status: "active", source: "cli", cwd: "/workspace/local", archived: false },
+        ],
+      })),
+    });
+    const invoke = vi.fn<PluginRuntime["nodes"]["invoke"]>(async () => ({
+      payloadJSON: JSON.stringify({
+        sessions: [
+          { threadId, status: "active", source: "vscode", cwd: "/workspace/node", archived: false },
+        ],
+      }),
+    }));
+    const { runtime } = createRuntime({
+      nodes: [
+        {
+          nodeId: "devbox",
+          connected: true,
+          commands: [CODEX_APP_SERVER_THREADS_LIST_COMMAND, CODEX_TERMINAL_RESUME_COMMAND],
+        },
+      ],
+      invoke,
+    });
+    const { api, getProvider } = createGatewayApi(runtime);
+    registerCodexSessionCatalog({
+      api,
+      bindingStore: createCodexTestBindingStore(),
+      control,
+      getRuntimeConfig: () => config,
+    });
+
+    await expect(getProvider()?.list({})).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          hostId: CODEX_LOCAL_SESSION_HOST_ID,
+          sessions: [expect.objectContaining({ threadId, canOpenTerminal: true })],
+        }),
+        expect.objectContaining({
+          hostId: "node:devbox",
+          sessions: [expect.objectContaining({ threadId, canOpenTerminal: true })],
+        }),
+      ]),
+    );
+    await expect(
+      getProvider()?.openTerminal?.({ hostId: CODEX_LOCAL_SESSION_HOST_ID, threadId }),
+    ).resolves.toMatchObject({
+      kind: "local",
+      argv: ["codex", "resume", threadId],
+      cwd: "/workspace/local",
+    });
+    await expect(
+      getProvider()?.openTerminal?.({ hostId: "node:devbox", threadId }),
+    ).resolves.toMatchObject({
+      kind: "node",
+      nodeId: "devbox",
+      command: CODEX_TERMINAL_RESUME_COMMAND,
+      cwd: "/workspace/node",
+    });
   });
 
   it("marks not-loaded local interactive sessions as actionable", async () => {

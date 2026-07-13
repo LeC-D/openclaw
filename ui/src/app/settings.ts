@@ -57,6 +57,15 @@ export function normalizeChatSendShortcut(value: unknown): ChatSendShortcut {
     : "enter";
 }
 
+const CATALOG_OPEN_TARGETS = ["viewer", "terminal"] as const;
+export type CatalogOpenTarget = (typeof CATALOG_OPEN_TARGETS)[number];
+
+export function normalizeCatalogOpenTarget(value: unknown): CatalogOpenTarget {
+  return CATALOG_OPEN_TARGETS.includes(value as CatalogOpenTarget)
+    ? (value as CatalogOpenTarget)
+    : "viewer";
+}
+
 const CHAT_WORKSPACE_DOCKS = ["right", "bottom"] as const;
 export type ChatWorkspaceDock = (typeof CHAT_WORKSPACE_DOCKS)[number];
 
@@ -112,6 +121,7 @@ export type UiSettings = {
   chatShowToolCalls: boolean;
   chatPersistCommentary?: boolean;
   chatSendShortcut?: ChatSendShortcut;
+  catalogOpenTarget?: CatalogOpenTarget;
   realtimeTalkInputDeviceId?: string;
   splitRatio: number; // Sidebar split ratio (0.4 to 0.7, default 0.6)
   chatSplitLayout?: ChatSplitLayout;
@@ -346,6 +356,7 @@ export function loadSettings(): UiSettings {
     chatShowToolCalls: true,
     chatPersistCommentary: false,
     chatSendShortcut: "enter",
+    catalogOpenTarget: "viewer",
     splitRatio: 0.6,
     navCollapsed: false,
     navWidth: NAV_WIDTH_DEFAULT,
@@ -396,6 +407,7 @@ export function loadSettings(): UiSettings {
           ? parsed.chatPersistCommentary
           : defaults.chatPersistCommentary,
       chatSendShortcut: normalizeChatSendShortcut(parsed.chatSendShortcut),
+      catalogOpenTarget: normalizeCatalogOpenTarget(parsed.catalogOpenTarget),
       realtimeTalkInputDeviceId: normalizeOptionalString(parsed.realtimeTalkInputDeviceId),
       splitRatio:
         typeof parsed.splitRatio === "number" &&
@@ -499,6 +511,9 @@ function persistSettings(next: UiSettings, options: { selectGateway?: boolean } 
     chatPersistCommentary: next.chatPersistCommentary ?? false,
     ...(normalizeChatSendShortcut(next.chatSendShortcut) === "modifier-enter"
       ? { chatSendShortcut: "modifier-enter" as const }
+      : {}),
+    ...(normalizeCatalogOpenTarget(next.catalogOpenTarget) === "terminal"
+      ? { catalogOpenTarget: "terminal" as const }
       : {}),
     ...(normalizeOptionalString(next.realtimeTalkInputDeviceId)
       ? { realtimeTalkInputDeviceId: normalizeOptionalString(next.realtimeTalkInputDeviceId) }

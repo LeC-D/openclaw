@@ -708,7 +708,11 @@ async function dispatchInvoke(
   }
 
   try {
-    const pluginNodeHostResult = await invokeRegisteredNodeHostCommand(command, frame.paramsJSON);
+    const pluginNodeHostResult = await invokeRegisteredNodeHostCommand(
+      command,
+      frame.paramsJSON,
+      runtime.pluginCommandIo,
+    );
     if (pluginNodeHostResult !== null) {
       await sendRawPayloadResult(client, frame, pluginNodeHostResult);
       return;

@@ -5,8 +5,10 @@ import { html, nothing, type TemplateResult } from "lit";
 import type { ConfigUiHints } from "../../api/types.ts";
 import {
   normalizeChatSendShortcut,
+  normalizeCatalogOpenTarget,
   TEXT_SCALE_STOPS,
   type ChatSendShortcut,
+  type CatalogOpenTarget,
   type TextScaleStop,
 } from "../../app/settings.ts";
 import type { ThemeTransitionContext } from "../../app/theme-transition.ts";
@@ -165,6 +167,8 @@ export type ConfigProps = {
   setTextScale: (value: number) => void;
   chatSendShortcut: ChatSendShortcut;
   setChatSendShortcut: (value: ChatSendShortcut) => void;
+  catalogOpenTarget: CatalogOpenTarget;
+  setCatalogOpenTarget: (value: CatalogOpenTarget) => void;
   microphone?: SettingsMicrophoneState;
   onMicrophoneRefresh?: () => void;
   onMicrophoneSelect?: (deviceId: string) => void;
@@ -1115,6 +1119,28 @@ function renderChatPreferencesSection(props: ConfigProps) {
                 ?selected=${props.chatSendShortcut === "modifier-enter"}
               >
                 ${t("chat.sendShortcutModifierEnter")}
+              </option>
+            </select>
+          `,
+        })}
+        ${renderSettingsRow({
+          title: t("chat.catalogOpenTarget"),
+          control: html`
+            <select
+              class="settings-select"
+              data-settings-catalog-open-target
+              aria-label=${t("chat.catalogOpenTarget")}
+              .value=${props.catalogOpenTarget}
+              @change=${(event: Event) =>
+                props.setCatalogOpenTarget(
+                  normalizeCatalogOpenTarget((event.currentTarget as HTMLSelectElement).value),
+                )}
+            >
+              <option value="viewer" ?selected=${props.catalogOpenTarget === "viewer"}>
+                ${t("chat.catalogOpenTargetViewer")}
+              </option>
+              <option value="terminal" ?selected=${props.catalogOpenTarget === "terminal"}>
+                ${t("chat.catalogOpenTargetTerminal")}
               </option>
             </select>
           `,

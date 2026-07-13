@@ -1003,6 +1003,10 @@
       "types": "./dist/plugin-sdk/session-catalog.d.ts",
       "default": "./dist/plugin-sdk/session-catalog.js"
     },
+    "./plugin-sdk/node-host": {
+      "types": "./dist/plugin-sdk/node-host.d.ts",
+      "default": "./dist/plugin-sdk/node-host.js"
+    },
     "./plugin-sdk/session-key-runtime": {
       "types": "./dist/plugin-sdk/session-key-runtime.d.ts",
       "default": "./dist/plugin-sdk/session-key-runtime.js"

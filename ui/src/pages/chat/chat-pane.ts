@@ -49,6 +49,7 @@ import {
   parseCatalogSessionKey,
   type CatalogSessionKey,
 } from "../../lib/sessions/catalog-key.ts";
+import { openCatalogSessionInTerminal } from "../../lib/sessions/catalog-terminal.ts";
 import { resolveSessionKey, scopedAgentParamsForSession } from "../../lib/sessions/index.ts";
 import {
   areUiSessionKeysEquivalent,
@@ -1723,6 +1724,10 @@ class ChatPane extends OpenClawLightDomElement {
     sessionWorkspace: SessionWorkspaceProps,
     backgroundTasks: BackgroundTasksProps,
   ) {
+    const catalogKey = this.state ? parseCatalogSessionKey(this.state.sessionKey) : null;
+    const canOpenCatalogTerminal = Boolean(
+      catalogKey && this.catalogSession?.canOpenTerminal && this.state?.terminalAvailable,
+    );
     return html`
       <div
         class="chat-pane__header ${this.active ? "chat-pane__header--active" : ""}"
@@ -1733,6 +1738,20 @@ class ChatPane extends OpenClawLightDomElement {
              drag-and-drop. -->
         <span class="chat-pane__session-title" title=${this.paneTitle}>${this.paneTitle}</span>
         <div class="chat-pane__actions">
+          ${canOpenCatalogTerminal && catalogKey
+            ? html`
+                <openclaw-tooltip .content=${t("chat.catalog.openInTerminal")}>
+                  <button
+                    class="btn btn--ghost btn--icon chat-icon-btn"
+                    type="button"
+                    aria-label=${t("chat.catalog.openInTerminal")}
+                    @click=${() => openCatalogSessionInTerminal(catalogKey)}
+                  >
+                    ${icons.terminal}
+                  </button>
+                </openclaw-tooltip>
+              `
+            : nothing}
           ${renderSessionDiffToggle(sessionWorkspace)}
           ${renderBackgroundTasksToggle(backgroundTasks)}
           ${renderSessionWorkspaceToggle(sessionWorkspace)}

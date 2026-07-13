@@ -5,6 +5,11 @@ import {
   resolveDefaultAgentId,
 } from "openclaw/plugin-sdk/agent-runtime";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import {
+  decodeNodePtyResumeParams,
+  resolveExecutableFromPathEnv,
+  runNodePtyCommand,
+} from "openclaw/plugin-sdk/node-host";
 import type {
   OpenClawPluginApi,
   OpenClawPluginNodeHostCommand,
@@ -59,6 +64,7 @@ import type {
 
 const CODEX_APP_SERVER_THREADS_LIST_COMMAND = "codex.appServer.threads.list.v1";
 const CODEX_APP_SERVER_THREAD_TURNS_LIST_COMMAND = "codex.appServer.thread.turns.list.v1";
+export const CODEX_TERMINAL_RESUME_COMMAND = "codex.terminal.resume.v1";
 
 const CODEX_APP_SERVER_THREADS_CAPABILITY = "codex-app-server-threads";
 const DEFAULT_PAGE_LIMIT = 50;
@@ -780,6 +786,10 @@ async function listPairedNode(params: {
     label: nodeLabel(params.node),
     kind: "node" as const,
     nodeId: params.node.nodeId,
+    ...(params.node.connected === true &&
+    params.node.commands?.includes(CODEX_TERMINAL_RESUME_COMMAND) === true
+      ? { canOpenTerminalCodex: true }
+      : {}),
   };
   if (params.node.connected !== true) {
     return {
@@ -923,6 +933,41 @@ export function createCodexSessionCatalogNodeHostCommands(
           }
           throw new Error("Codex app-server transcript is unavailable", { cause: error });
         }
+      },
+    },
+    {
+      command: CODEX_TERMINAL_RESUME_COMMAND,
+      cap: CODEX_APP_SERVER_THREADS_CAPABILITY,
+      dangerous: false,
+      duplex: true,
+      isAvailable: ({ env }) => Boolean(resolveExecutableFromPathEnv("codex", env.PATH ?? "")),
+      handle: async (paramsJSON, io) => {
+        const resume = decodeNodePtyResumeParams(paramsJSON, (value) => {
+          if (
+            typeof value !== "string" ||
+            !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(value)
+          ) {
+            throw new CatalogParamsError("threadId must be a UUID");
+          }
+          return value;
+        });
+        await requireCatalogEligibleThread(control, resume.threadId);
+        const file = resolveExecutableFromPathEnv("codex", process.env.PATH ?? "");
+        if (!file) {
+          throw new Error("Codex CLI is unavailable");
+        }
+        return JSON.stringify(
+          await runNodePtyCommand(
+            {
+              file,
+              args: ["resume", resume.threadId],
+              cwd: resume.cwd,
+              cols: resume.cols,
+              rows: resume.rows,
+            },
+            io,
+          ),
+        );
       },
     },
   ];
@@ -1077,7 +1122,7 @@ function requireIdleThread(thread: CodexThread, action: "continue" | "archive"):
 async function requireCatalogEligibleThread(
   control: CodexSessionCatalogControl,
   threadId: string,
-): Promise<void> {
+): Promise<CodexSessionCatalogSession> {
   let cursor: string | undefined;
   const seenCursors = new Set<string>();
   for (let pageIndex = 0; pageIndex < MAX_ACTION_CATALOG_PAGES; pageIndex += 1) {
@@ -1088,7 +1133,7 @@ async function requireCatalogEligibleThread(
     const candidate = page.sessions.find((session) => session.threadId === threadId);
     if (candidate) {
       if (candidate.source === "cli" || candidate.source === "vscode") {
-        return;
+        return candidate;
       }
       throw new CatalogParamsError(
         "Codex session is not a non-archived interactive CLI or VS Code session",
@@ -1107,6 +1152,44 @@ async function requireCatalogEligibleThread(
     cursor = nextCursor;
   }
   throw new CatalogParamsError("Codex session eligibility could not be verified");
+}
+
+async function resolveNodeCatalogEligibleThread(params: {
+  runtime: PluginRuntime;
+  nodeId: string;
+  threadId: string;
+}): Promise<CodexSessionCatalogSession> {
+  let cursor: string | undefined;
+  const seenCursors = new Set<string>();
+  for (let pageIndex = 0; pageIndex < MAX_ACTION_CATALOG_PAGES; pageIndex += 1) {
+    const raw = await params.runtime.nodes.invoke({
+      nodeId: params.nodeId,
+      command: CODEX_APP_SERVER_THREADS_LIST_COMMAND,
+      params: {
+        limit: CODEX_SESSION_CATALOG_MAX_PAGE_LIMIT,
+        searchTerm: params.threadId,
+        ...(cursor ? { cursor } : {}),
+      },
+      timeoutMs: NODE_INVOKE_TIMEOUT_MS,
+    });
+    const page = parseCatalogPage(unwrapNodeInvokePayload(raw));
+    const record = page.sessions.find((candidate) => candidate.threadId === params.threadId);
+    if (record) {
+      if (isInteractiveThreadSource(record.source)) {
+        return record;
+      }
+      break;
+    }
+    const nextCursor = page.nextCursor?.trim();
+    if (!nextCursor || seenCursors.has(nextCursor)) {
+      break;
+    }
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+  throw new CatalogParamsError(
+    "Codex session is not a non-archived interactive CLI or VS Code session",
+  );
 }
 
 function adoptionSessionKey(threadId: string): string {
@@ -1699,6 +1782,8 @@ function toGenericCatalogHost(host: CodexSessionCatalogHost): SessionCatalogHost
     sessions: host.sessions.map((session) => {
       const continuableStatus = session.status === "idle" || session.status === "notLoaded";
       const actionable = local && continuableStatus && isInteractiveThreadSource(session.source);
+      const canOpenTerminal =
+        isInteractiveThreadSource(session.source) && (local || host.canOpenTerminalCodex === true);
       return {
         threadId: session.threadId,
         ...(session.name != null ? { name: session.name } : {}),
@@ -1715,6 +1800,7 @@ function toGenericCatalogHost(host: CodexSessionCatalogHost): SessionCatalogHost
         ...(session.openClawSessionKey ? { openClawSessionKey: session.openClawSessionKey } : {}),
         canContinue: actionable,
         canArchive: actionable,
+        canOpenTerminal,
       };
     }),
     ...(host.nextCursor ? { nextCursor: host.nextCursor } : {}),
@@ -1835,6 +1921,48 @@ function registerCodexSessionCatalog(params: {
         threadId: request.threadId,
       });
       return { ok: true };
+    },
+    openTerminal: async (request) => {
+      const title = `codex resume ${request.threadId.slice(0, 8)}…`;
+      if (request.hostId === CODEX_LOCAL_SESSION_HOST_ID) {
+        const record = await requireCatalogEligibleThread(params.control, request.threadId);
+        return {
+          kind: "local",
+          argv: ["codex", "resume", request.threadId],
+          ...(record.cwd ? { cwd: record.cwd } : {}),
+          title,
+        };
+      }
+      if (!request.hostId.startsWith("node:")) {
+        throw new CatalogParamsError("hostId is invalid");
+      }
+      const nodeId = request.hostId.slice("node:".length);
+      const node = (await params.api.runtime.nodes.list()).nodes.find(
+        (candidate) =>
+          candidate.nodeId === nodeId &&
+          candidate.connected === true &&
+          candidate.commands?.includes(CODEX_APP_SERVER_THREADS_LIST_COMMAND) === true &&
+          candidate.commands.includes(CODEX_TERMINAL_RESUME_COMMAND),
+      );
+      if (!node) {
+        throw new CatalogParamsError("paired-node Codex terminal is unavailable");
+      }
+      const record = await resolveNodeCatalogEligibleThread({
+        runtime: params.api.runtime,
+        nodeId,
+        threadId: request.threadId,
+      });
+      return {
+        kind: "node",
+        nodeId,
+        command: CODEX_TERMINAL_RESUME_COMMAND,
+        paramsJSON: JSON.stringify({
+          threadId: request.threadId,
+          ...(record.cwd ? { cwd: record.cwd } : {}),
+        }),
+        ...(record.cwd ? { cwd: record.cwd } : {}),
+        title,
+      };
     },
   };
   params.api.registerSessionCatalog(provider);

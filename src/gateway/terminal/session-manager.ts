@@ -1,14 +1,16 @@
 // Owns the lifecycle of operator terminal sessions: one PTY per open, bound to
 // the connection that opened it, streamed back over the gateway event channel.
 import { randomUUID } from "node:crypto";
-import { spawnTerminalPty, type TerminalPtyHandle } from "./pty.js";
+import {
+  createLocalTerminalBackend,
+  type LocalTerminalBackendSpawner,
+  type TerminalBackend,
+} from "./backend.js";
 
 /** Emits one terminal event frame to the single owning connection. */
 type TerminalEventSink = (connId: string, event: string, payload: unknown) => void;
 
 /** Injectable PTY spawner so tests can drive sessions without a real shell. */
-type TerminalSpawner = typeof spawnTerminalPty;
-
 const TERMINAL_EVENT_DATA = "terminal.data" as const;
 const TERMINAL_EVENT_EXIT = "terminal.exit" as const;
 
@@ -21,7 +23,7 @@ type TerminalSession = {
   agentId: string;
   cwd: string;
   shell: string;
-  pty: TerminalPtyHandle;
+  backend: TerminalBackend;
   seq: number;
   closed: boolean;
   createdAtMs: number;
@@ -97,7 +99,7 @@ class TerminalOutputRing {
 
 type TerminalSessionManagerOptions = {
   emit: TerminalEventSink;
-  spawn?: TerminalSpawner;
+  spawn?: LocalTerminalBackendSpawner;
   maxSessions?: number;
   env?: NodeJS.ProcessEnv;
   /**
@@ -121,6 +123,7 @@ type TerminalOpenRequest = {
   cols: number;
   rows: number;
   env: Record<string, string>;
+  createBackend?: () => Promise<TerminalBackend>;
 };
 
 type TerminalOpenOutcome =
@@ -142,7 +145,7 @@ export class TerminalSessionManager {
   // orphan for a dead connection.
   private readonly pendingOpens = new Map<string, Set<OpenToken>>();
   private readonly emit: TerminalEventSink;
-  private readonly spawn: TerminalSpawner;
+  private readonly spawn?: LocalTerminalBackendSpawner;
   private readonly maxSessions: number;
   private readonly detachGraceMs: number;
   private readonly maxDetachedSessions: number;
@@ -153,7 +156,7 @@ export class TerminalSessionManager {
 
   constructor(options: TerminalSessionManagerOptions) {
     this.emit = options.emit;
-    this.spawn = options.spawn ?? spawnTerminalPty;
+    this.spawn = options.spawn;
     this.maxSessions = options.maxSessions ?? DEFAULT_MAX_SESSIONS;
     this.detachGraceMs = options.detachGraceMs ?? 0;
     this.maxDetachedSessions = options.maxDetachedSessions ?? DEFAULT_MAX_DETACHED_SESSIONS;
@@ -178,16 +181,21 @@ export class TerminalSessionManager {
     this.opening += 1;
     const token: OpenToken = { agentId: request.agentId };
     this.trackPendingOpen(request.connId, token);
-    let pty: TerminalPtyHandle;
+    let backend: TerminalBackend;
     try {
-      pty = await this.spawn({
-        file: request.shell,
-        args: request.args,
-        cwd: request.cwd,
-        env: request.env,
-        cols: request.cols,
-        rows: request.rows,
-      });
+      backend = request.createBackend
+        ? await request.createBackend()
+        : await createLocalTerminalBackend(
+            {
+              file: request.shell,
+              args: request.args,
+              cwd: request.cwd,
+              env: request.env,
+              cols: request.cols,
+              rows: request.rows,
+            },
+            this.spawn,
+          );
     } catch (err) {
       this.opening -= 1;
       this.untrackPendingOpen(request.connId, token);
@@ -202,7 +210,7 @@ export class TerminalSessionManager {
       // The owning connection disconnected while the shell was spawning; kill it
       // now rather than register an orphan no one can reach or close.
       try {
-        pty.kill();
+        backend.kill();
       } catch {
         // Best-effort; the process may already be gone.
       }
@@ -215,7 +223,7 @@ export class TerminalSessionManager {
       agentId: request.agentId,
       cwd: request.cwd,
       shell: request.shell,
-      pty,
+      backend,
       seq: 0,
       closed: false,
       createdAtMs: Date.now(),
@@ -226,7 +234,7 @@ export class TerminalSessionManager {
     this.sessions.set(session.id, session);
     this.indexByConn(request.connId, session.id);
 
-    pty.onData((chunk) => {
+    backend.onData((chunk) => {
       if (session.closed) {
         return;
       }
@@ -241,9 +249,13 @@ export class TerminalSessionManager {
         data: chunk,
       });
     });
-    pty.onExit((event) => {
+    backend.onExit((event) => {
       const signal = event.signal && event.signal !== 0 ? event.signal : null;
-      this.finalize(session, "process_exit", { exitCode: event.exitCode ?? null, signal });
+      this.finalize(session, event.error ? "error" : "process_exit", {
+        exitCode: event.exitCode ?? null,
+        signal,
+        ...(event.error ? { error: event.error } : {}),
+      });
     });
 
     return {
@@ -262,7 +274,7 @@ export class TerminalSessionManager {
       return false;
     }
     try {
-      session.pty.write(data);
+      session.backend.write(data);
       return true;
     } catch {
       this.finalize(session, "error", { error: "write failed" });
@@ -277,7 +289,7 @@ export class TerminalSessionManager {
       return false;
     }
     try {
-      session.pty.resize(cols, rows);
+      session.backend.resize(cols, rows);
       return true;
     } catch {
       return false;
@@ -517,7 +529,7 @@ export class TerminalSessionManager {
       this.byConn.get(session.connId)?.delete(session.id);
     }
     try {
-      session.pty.kill();
+      session.backend.kill();
     } catch {
       // Process may already be gone; the kill is best-effort teardown.
     }

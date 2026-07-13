@@ -1,6 +1,12 @@
 import { statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import {
+  decodeNodePtyResumeParams,
+  resolveExecutableFromPathEnv,
+  runNodePtyCommand,
+  validateClaudeSessionId,
+} from "openclaw/plugin-sdk/node-host";
 import type {
   OpenClawPluginNodeHostCommand,
   OpenClawPluginNodeInvokePolicy,
@@ -8,6 +14,7 @@ import type {
 import {
   CLAUDE_SESSION_READ_COMMAND,
   CLAUDE_SESSIONS_LIST_COMMAND,
+  CLAUDE_TERMINAL_RESUME_COMMAND,
   listLocalClaudeSessionPage,
   readLocalClaudeTranscriptPage,
 } from "./session-catalog.js";
@@ -53,6 +60,34 @@ export function createClaudeSessionNodeHostCommands(): OpenClawPluginNodeHostCom
       isAvailable: ({ env }) => claudeProjectsAvailable(env),
       handle: async (paramsJSON) =>
         JSON.stringify(await readLocalClaudeTranscriptPage(parseNodeParams(paramsJSON))),
+    },
+    {
+      command: CLAUDE_TERMINAL_RESUME_COMMAND,
+      cap: CLAUDE_SESSIONS_CAPABILITY,
+      dangerous: false,
+      duplex: true,
+      isAvailable: ({ env }) =>
+        claudeProjectsAvailable(env) &&
+        Boolean(resolveExecutableFromPathEnv("claude", env.PATH ?? "")),
+      handle: async (paramsJSON, io) => {
+        const params = decodeNodePtyResumeParams(paramsJSON, validateClaudeSessionId);
+        const file = resolveExecutableFromPathEnv("claude", process.env.PATH ?? "");
+        if (!file) {
+          throw new Error("Claude CLI is unavailable");
+        }
+        return JSON.stringify(
+          await runNodePtyCommand(
+            {
+              file,
+              args: ["--resume", params.threadId],
+              cwd: params.cwd,
+              cols: params.cols,
+              rows: params.rows,
+            },
+            io,
+          ),
+        );
+      },
     },
   ];
 }

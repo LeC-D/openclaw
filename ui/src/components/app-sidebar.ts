@@ -24,6 +24,7 @@ import {
 } from "../app/context.ts";
 import { beginNativeWindowDragFromTopInset } from "../app/native-window-drag.ts";
 import { controlUiPublicAssetPath } from "../app/public-assets.ts";
+import type { CatalogOpenTarget } from "../app/settings.ts";
 import type { ThemeMode } from "../app/theme.ts";
 import { t } from "../i18n/index.ts";
 import "./menu-surface.ts";
@@ -49,6 +50,7 @@ import {
   CATALOG_SESSION_CONTINUED_EVENT,
   type CatalogSessionContinuedDetail,
 } from "../lib/sessions/catalog-key.ts";
+import { openCatalogSessionInTerminal } from "../lib/sessions/catalog-terminal.ts";
 import { reorderSessionCustomGroups } from "../lib/sessions/custom-groups.ts";
 import {
   readSessionDragData,
@@ -83,6 +85,7 @@ import { OpenClawLightDomContentsElement } from "../lit/openclaw-element.ts";
 import { SubscriptionsController } from "../lit/subscriptions-controller.ts";
 import { getSafeLocalStorage } from "../local-storage.ts";
 import type { NewSessionTarget } from "../pages/new-session/location.ts";
+import "./catalog-session-menu.ts";
 import { renderSidebarAgentMenu } from "./app-sidebar-agent-menu.ts";
 import {
   isSidebarRouteActive,
@@ -104,9 +107,11 @@ import {
   adoptedCatalogSessionKeys,
   bindAdoptedCatalogSession,
   type CatalogBackingSessionDisplay,
+  type CatalogSessionMenuRequest,
   formatSidebarTimestamp,
   renderSessionCatalogGroups,
 } from "./app-sidebar-session-catalogs.ts";
+import type { CatalogSessionMenuAction } from "./catalog-session-menu.ts";
 import { icons } from "./icons.ts";
 import {
   LOBSTER_LOGO_VISIT_EVENT,
@@ -145,6 +150,11 @@ type SidebarRecentSession = {
 
 type SidebarSessionMenuState = {
   session: SidebarRecentSession;
+  x: number;
+  y: number;
+};
+
+type SidebarCatalogSessionMenuState = CatalogSessionMenuRequest & {
   x: number;
   y: number;
 };
@@ -244,6 +254,8 @@ class AppSidebar extends OpenClawLightDomContentsElement {
   @property({ attribute: false }) activePluginTabId = "";
   @property({ attribute: false }) enabledRouteIds?: readonly NavigationRouteId[];
   @property({ attribute: false }) connected = false;
+  @property({ attribute: false }) terminalAvailable = false;
+  @property({ attribute: false }) catalogOpenTarget: CatalogOpenTarget = "viewer";
   @property({ attribute: false }) canPairDevice = false;
   @property({ attribute: false }) sessionKey = "";
   @property({ attribute: false }) sidebarPinnedRoutes: readonly SidebarNavRoute[] =
@@ -277,6 +289,7 @@ class AppSidebar extends OpenClawLightDomContentsElement {
   @state() private customizeMenuPosition: { x: number; y: number } | null = null;
   @state() private moreMenuPosition: { x: number; y: number } | null = null;
   @state() private sessionMenu: SidebarSessionMenuState | null = null;
+  @state() private catalogSessionMenu: SidebarCatalogSessionMenuState | null = null;
   // Multi-select set for batch menu actions; stale keys are dropped lazily by
   // selectedVisibleSessions() so list refreshes never need to prune here.
   @state() private selectedSessionKeys: ReadonlySet<string> = new Set();
@@ -310,6 +323,7 @@ class AppSidebar extends OpenClawLightDomContentsElement {
   private customizeMenuTrigger: HTMLElement | null = null;
   private moreMenuTrigger: HTMLElement | null = null;
   private sessionMenuTrigger: HTMLElement | null = null;
+  private catalogSessionMenuTrigger: HTMLElement | null = null;
   // Guards the async work fetch: a menu reopened for another session must not
   // adopt a stale response.
   private sessionMenuWorkVersion = 0;
@@ -719,6 +733,7 @@ class AppSidebar extends OpenClawLightDomContentsElement {
       this.customizeMenuPosition ||
       this.moreMenuPosition ||
       this.sessionMenu ||
+      this.catalogSessionMenu ||
       this.sessionGroupMenu ||
       this.sessionSortMenuPosition ||
       this.agentMenuPosition,
@@ -726,6 +741,7 @@ class AppSidebar extends OpenClawLightDomContentsElement {
     this.closeCustomizeMenu();
     this.closeMoreMenu();
     this.closeSessionMenu();
+    this.closeCatalogSessionMenu();
     this.closeSessionGroupMenu();
     this.closeSessionSortMenu();
     this.closeAgentMenu();
@@ -1454,6 +1470,7 @@ class AppSidebar extends OpenClawLightDomContentsElement {
   ) {
     this.closeCustomizeMenu();
     this.closeMoreMenu();
+    this.closeCatalogSessionMenu();
     this.closeSessionGroupMenu();
     this.closeSessionSortMenu();
     this.closeAgentMenu();
@@ -1467,6 +1484,40 @@ class AppSidebar extends OpenClawLightDomContentsElement {
     this.sessionMenu = null;
     this.sessionMenuWorkVersion += 1;
     this.sessionMenuWork = null;
+  }
+
+  private openCatalogSessionMenu(
+    request: CatalogSessionMenuRequest,
+    x: number,
+    y: number,
+    trigger: HTMLElement | null = null,
+  ) {
+    this.closeCustomizeMenu();
+    this.closeMoreMenu();
+    this.closeSessionMenu();
+    this.closeSessionGroupMenu();
+    this.closeSessionSortMenu();
+    this.closeAgentMenu();
+    this.catalogSessionMenuTrigger = trigger;
+    this.catalogSessionMenu = { ...request, x, y };
+  }
+
+  private closeCatalogSessionMenu() {
+    this.catalogSessionMenuTrigger = null;
+    this.catalogSessionMenu = null;
+  }
+
+  private handleCatalogSessionMenuAction(
+    menu: SidebarCatalogSessionMenuState,
+    action: CatalogSessionMenuAction,
+  ) {
+    if (action === "terminal") {
+      if (menu.canOpenTerminal && this.terminalAvailable) {
+        openCatalogSessionInTerminal(menu.key);
+      }
+      return;
+    }
+    this.onNavigate?.("chat", { search: menu.search });
   }
 
   private loadSessionMenuWork(session: SidebarRecentSession) {
@@ -2289,6 +2340,24 @@ class AppSidebar extends OpenClawLightDomContentsElement {
     `;
   }
 
+  private renderCatalogSessionMenu() {
+    const menu = this.catalogSessionMenu;
+    if (!menu) {
+      return nothing;
+    }
+    return html`
+      <openclaw-catalog-session-menu
+        .x=${menu.x}
+        .y=${menu.y}
+        .trigger=${this.catalogSessionMenuTrigger}
+        .terminalDisabled=${!menu.canOpenTerminal || !this.terminalAvailable}
+        .onAction=${(action: CatalogSessionMenuAction) =>
+          this.handleCatalogSessionMenuAction(menu, action)}
+        .onClose=${() => this.closeCatalogSessionMenu()}
+      ></openclaw-catalog-session-menu>
+    `;
+  }
+
   private renderSessionGroupMenu() {
     const menu = this.sessionGroupMenu;
     if (!menu) {
@@ -2950,6 +3019,10 @@ class AppSidebar extends OpenClawLightDomContentsElement {
       onLoadMore: (catalogId) => void this.loadMoreSessionCatalog(catalogId),
       onOpenNewSession: this.onOpenNewSession,
       onNavigate: this.onNavigate,
+      catalogOpenTarget: this.catalogOpenTarget,
+      terminalAvailable: this.terminalAvailable,
+      onOpenTerminal: (key) => openCatalogSessionInTerminal(key),
+      onOpenMenu: (request, x, y, trigger) => this.openCatalogSessionMenu(request, x, y, trigger),
     });
   }
 
@@ -3088,7 +3161,8 @@ class AppSidebar extends OpenClawLightDomContentsElement {
           </div>
         </div>
         ${this.renderCustomizeMenu()} ${this.renderMoreMenu()} ${this.renderAgentMenu()}
-        ${this.renderSessionMenu()} ${this.renderSessionGroupMenu()} ${this.renderSessionSortMenu()}
+        ${this.renderSessionMenu()} ${this.renderCatalogSessionMenu()}
+        ${this.renderSessionGroupMenu()} ${this.renderSessionSortMenu()}
       </aside>
     `;
   }

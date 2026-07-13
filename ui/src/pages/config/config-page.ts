@@ -15,10 +15,12 @@ import { importCustomThemeFromUrl } from "../../app/custom-theme.ts";
 import { hasOperatorAdminAccess } from "../../app/operator-access.ts";
 import {
   loadSettings,
+  normalizeCatalogOpenTarget,
   normalizeTextScale,
   normalizeChatSendShortcut,
   patchSettings,
   type ChatSendShortcut,
+  type CatalogOpenTarget,
   type UiSettings,
 } from "../../app/settings.ts";
 import { startThemeTransition } from "../../app/theme-transition.ts";
@@ -597,6 +599,7 @@ export class ConfigPage extends OpenClawLightDomElement {
       customTheme: next.customTheme,
       textScale: next.textScale,
       chatSendShortcut: next.chatSendShortcut,
+      catalogOpenTarget: next.catalogOpenTarget,
       realtimeTalkInputDeviceId: next.realtimeTalkInputDeviceId,
       lobsterPetVisits: next.lobsterPetVisits,
       lobsterPetSounds: next.lobsterPetSounds,
@@ -646,6 +649,10 @@ export class ConfigPage extends OpenClawLightDomElement {
 
   private setChatSendShortcut(value: ChatSendShortcut) {
     this.applySettings({ ...this.settings, chatSendShortcut: value });
+  }
+
+  private setCatalogOpenTarget(value: CatalogOpenTarget) {
+    this.applySettings({ ...this.settings, catalogOpenTarget: value });
   }
 
   private selectMicrophone(deviceId: string) {
@@ -805,6 +812,8 @@ export class ConfigPage extends OpenClawLightDomElement {
       setTextScale: (value) => this.setTextScale(value),
       chatSendShortcut: normalizeChatSendShortcut(this.settings.chatSendShortcut),
       setChatSendShortcut: (value) => this.setChatSendShortcut(value),
+      catalogOpenTarget: normalizeCatalogOpenTarget(this.settings.catalogOpenTarget),
+      setCatalogOpenTarget: (value) => this.setCatalogOpenTarget(value),
       microphone: {
         devices: this.microphoneDevices,
         selectedDeviceId: this.settings.realtimeTalkInputDeviceId ?? "",

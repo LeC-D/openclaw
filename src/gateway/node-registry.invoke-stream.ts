@@ -22,6 +22,7 @@ export type PendingInvoke = {
   onProgress?: (chunk: string) => void;
   nextProgressSeq: number;
   progressChunks: Map<number, string>;
+  nextInputSeq: number;
   removeAbortListener?: () => void;
 };
 

@@ -5,16 +5,18 @@ const mocks = vi.hoisted(() => ({
   spawn: vi.fn(),
 }));
 
-vi.mock("../../process/kill-tree.js", () => ({ signalProcessTree: mocks.signalProcessTree }));
+vi.mock("./kill-tree.js", () => ({ signalProcessTree: mocks.signalProcessTree }));
 vi.mock("@lydell/node-pty", () => ({ spawn: mocks.spawn }));
 
-const { spawnTerminalPty } = await import("./pty.js");
+const { spawnTerminalPty } = await import("./terminal-pty.js");
 
 function fakePty(pid = 4321) {
   return {
     pid,
     write: vi.fn(),
     resize: vi.fn(),
+    pause: vi.fn(),
+    resume: vi.fn(),
     onData: vi.fn(),
     onExit: vi.fn(),
     kill: vi.fn(),

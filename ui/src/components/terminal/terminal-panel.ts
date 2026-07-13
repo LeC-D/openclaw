@@ -333,6 +333,16 @@ export class OpenClawTerminalPanel extends OpenClawLitElement {
     if (dock) {
       this.dock = dock;
     }
+    if (detail?.catalog) {
+      if (!this.available) {
+        return;
+      }
+      this.open = true;
+      this.syncLayoutReservation();
+      this.persistLayout();
+      void this.openSession(detail.catalog);
+      return;
+    }
     if (detail?.open === true) {
       if (!this.available) {
         return;
@@ -510,10 +520,10 @@ export class OpenClawTerminalPanel extends OpenClawLitElement {
   /** Binds a freshly opened or attached gateway session to its tab. */
   private adoptSession(
     tab: TerminalTabState,
-    result: { sessionId: string; shell: string; agentId: string; cwd: string },
+    result: { sessionId: string; shell: string; agentId: string; cwd: string; title?: string },
   ): void {
     tab.gatewaySessionId = result.sessionId;
-    tab.shellName = shellBasename(result.shell);
+    tab.shellName = result.title ?? shellBasename(result.shell);
     tab.agentId = result.agentId;
     tab.cwd = result.cwd;
     // Libterminal observes layout before the Gateway session exists. Resync the
@@ -534,7 +544,7 @@ export class OpenClawTerminalPanel extends OpenClawLitElement {
     }
   }
 
-  private async openSession(): Promise<void> {
+  private async openSession(catalog?: TerminalPanelToggleDetail["catalog"]): Promise<void> {
     const operation = this.captureTerminalOperation();
     if (!operation || this.booting) {
       return;
@@ -549,7 +559,7 @@ export class OpenClawTerminalPanel extends OpenClawLitElement {
       const boot = await this.bootTab(operation);
       createdTab = boot.tab;
       const result = await boot.connection.open(
-        { agentId, cols: boot.cols, rows: boot.rows },
+        { agentId, cols: boot.cols, rows: boot.rows, ...(catalog ? { catalog } : {}) },
         this.tabSink(boot.tab),
       );
       if (!this.isTerminalOperationCurrent(operation) || boot.tab.cancelled) {

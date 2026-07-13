@@ -2322,7 +2322,13 @@ export type OpenClawPluginNodeHostCommandAvailabilityContext = {
   env: NodeJS.ProcessEnv;
 };
 
-export type OpenClawPluginNodeHostCommand = {
+export type OpenClawPluginNodeHostCommandIo = {
+  emitChunk(chunk: string): Promise<void>;
+  onInput(callback: (payloadJSON: string) => void): void;
+  signal: AbortSignal;
+};
+
+type OpenClawPluginNodeHostCommandBase = {
   command: string;
   cap?: string;
   dangerous?: boolean;
@@ -2342,8 +2348,22 @@ export type OpenClawPluginNodeHostCommand = {
       tool: string;
     };
   };
-  handle: (paramsJSON?: string | null) => Promise<string>;
 };
+
+export type OpenClawPluginNodeHostCommand = OpenClawPluginNodeHostCommandBase &
+  (
+    | {
+        duplex: true;
+        handle: (
+          paramsJSON: string | null | undefined,
+          io: OpenClawPluginNodeHostCommandIo,
+        ) => Promise<string>;
+      }
+    | {
+        duplex?: false;
+        handle: (paramsJSON?: string | null) => Promise<string>;
+      }
+  );
 
 export type OpenClawPluginNodeInvokeTransportResult =
   | {

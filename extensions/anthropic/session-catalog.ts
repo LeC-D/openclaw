@@ -17,6 +17,7 @@ import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 export const CLAUDE_SESSIONS_LIST_COMMAND = "anthropic.claude.sessions.list.v1";
 export const CLAUDE_SESSION_READ_COMMAND = "anthropic.claude.sessions.read.v1";
 export const CLAUDE_CLI_NODE_RUN_COMMAND = "agent.cli.claude.run.v1";
+export const CLAUDE_TERMINAL_RESUME_COMMAND = "anthropic.claude.terminal.resume.v1";
 import { CLAUDE_CLI_BACKEND_ID, CLAUDE_CLI_DEFAULT_MODEL_REF } from "./cli-constants.js";
 import {
   adoptedSessionKey,
@@ -93,6 +94,7 @@ export type ClaudeSessionCatalogHost = ClaudeSessionCatalogPage & {
   connected: boolean;
   nodeId?: string;
   canContinueClaude?: boolean;
+  canOpenTerminalClaude?: boolean;
   error?: { code: string; message: string };
 };
 
@@ -973,6 +975,10 @@ export async function listClaudeSessionCatalog(params: {
           node.invocableCommands?.includes(CLAUDE_SESSIONS_LIST_COMMAND) === true &&
           node.invocableCommands.includes(CLAUDE_SESSION_READ_COMMAND) &&
           node.invocableCommands.includes(CLAUDE_CLI_NODE_RUN_COMMAND),
+        ...(node.connected === true &&
+        node.commands?.includes(CLAUDE_TERMINAL_RESUME_COMMAND) === true
+          ? { canOpenTerminalClaude: true }
+          : {}),
       };
       if (node.connected !== true) {
         return Object.assign(common, {
@@ -1357,6 +1363,9 @@ function toGenericClaudeHost(
       // the run command: continue only returns the existing session key, and
       // the turn itself still fails closed at invoke time.
       const continuable = localResumable || nodeCli || Boolean(existingSessionKey);
+      const canOpenTerminal =
+        isResumableClaudeSource(session.source) &&
+        (host.hostId === CLAUDE_LOCAL_SESSION_HOST_ID || host.canOpenTerminalClaude === true);
       const openClawSessionKey = continuable ? existingSessionKey : undefined;
       return {
         threadId: session.threadId,
@@ -1374,6 +1383,7 @@ function toGenericClaudeHost(
         ...(openClawSessionKey ? { openClawSessionKey } : {}),
         canContinue: continuable,
         canArchive: false,
+        canOpenTerminal,
       };
     }),
     ...(host.nextCursor ? { nextCursor: host.nextCursor } : {}),
@@ -1403,6 +1413,60 @@ export function registerClaudeSessionCatalog(api: OpenClawPluginApi): void {
     },
     continueSession: async (request) =>
       await continueClaudeSession(api, request.hostId, request.threadId),
+    openTerminal: async (request) => {
+      const title = `claude --resume ${request.threadId.slice(0, 8)}…`;
+      if (request.hostId === CLAUDE_LOCAL_SESSION_HOST_ID) {
+        const record = (await listClaudeSessions()).find(
+          (candidate) => candidate.threadId === request.threadId,
+        );
+        if (!record || !isResumableClaudeSource(record.source)) {
+          throw new ClaudeCatalogParamsError("Claude session is unavailable");
+        }
+        const source = await fs.stat(record.filePath).catch(() => undefined);
+        if (!source?.isFile()) {
+          throw new ClaudeCatalogParamsError("Claude session transcript is unavailable");
+        }
+        return {
+          kind: "local",
+          argv: ["claude", "--resume", request.threadId],
+          ...(record.cwd ? { cwd: record.cwd } : {}),
+          title,
+        };
+      }
+      if (!request.hostId.startsWith("node:")) {
+        throw new ClaudeCatalogParamsError("hostId is invalid");
+      }
+      const nodeId = request.hostId.slice("node:".length);
+      const node = (await api.runtime.nodes.list()).nodes.find(
+        (candidate) =>
+          candidate.nodeId === nodeId &&
+          candidate.connected === true &&
+          candidate.commands?.includes(CLAUDE_SESSIONS_LIST_COMMAND) === true &&
+          candidate.commands.includes(CLAUDE_TERMINAL_RESUME_COMMAND),
+      );
+      if (!node) {
+        throw new ClaudeCatalogParamsError("paired-node Claude terminal is unavailable");
+      }
+      const record = await resolveNodeClaudeRecord({
+        runtime: api.runtime,
+        nodeId,
+        threadId: request.threadId,
+      });
+      if (!isResumableClaudeSource(record.source)) {
+        throw new ClaudeCatalogParamsError("Claude session cannot be resumed in a terminal");
+      }
+      return {
+        kind: "node",
+        nodeId,
+        command: CLAUDE_TERMINAL_RESUME_COMMAND,
+        paramsJSON: JSON.stringify({
+          threadId: request.threadId,
+          ...(record.cwd ? { cwd: record.cwd } : {}),
+        }),
+        ...(record.cwd ? { cwd: record.cwd } : {}),
+        title,
+      };
+    },
   };
   api.registerSessionCatalog(provider);
 }

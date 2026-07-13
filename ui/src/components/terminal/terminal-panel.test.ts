@@ -2,6 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { i18n } from "../../i18n/index.ts";
+import { createStorageMock } from "../../test-helpers/storage.ts";
 import type { TerminalGatewayClient } from "./terminal-connection.ts";
 
 type CreateOptions = {
@@ -69,6 +70,8 @@ customElements.define(TERMINAL_PANEL_ELEMENT_NAME, TestTerminalPanel);
 
 describe("OpenClawTerminalPanel", () => {
   beforeEach(async () => {
+    vi.stubGlobal("localStorage", createStorageMock());
+    vi.stubGlobal("sessionStorage", createStorageMock());
     await i18n.setLocale("en");
   });
 
@@ -77,6 +80,7 @@ describe("OpenClawTerminalPanel", () => {
     localStorage.clear();
     sessionStorage.clear();
     createGhosttyTerminalMock.mockReset();
+    vi.unstubAllGlobals();
     await i18n.setLocale("en");
   });
 
@@ -154,6 +158,37 @@ describe("OpenClawTerminalPanel", () => {
         params: { sessionId: "session-1", cols: 120, rows: 40 },
       });
     });
+  });
+
+  it("opens a new titled tab for a catalog toggle request", async () => {
+    createGhosttyTerminalMock.mockImplementation(async () => createTerminalController());
+    const requests: Array<{ method: string; params: unknown }> = [];
+    const client: TerminalGatewayClient = {
+      request: async <T>(method: string, params?: unknown) => {
+        requests.push({ method, params });
+        return {
+          ...terminalOpenResult("catalog-terminal-1"),
+          title: "codex resume 0d5c…",
+        } as T;
+      },
+      addEventListener: () => () => {},
+    };
+    const panel = document.createElement(TERMINAL_PANEL_ELEMENT_NAME) as OpenClawTerminalPanel;
+    panel.client = client;
+    panel.available = true;
+    document.body.append(panel);
+    const catalog = { catalogId: "codex", hostId: "node:mac", threadId: "thread" };
+
+    panel.handleToggleRequest(new CustomEvent("openclaw:terminal-toggle", { detail: { catalog } }));
+
+    await vi.waitFor(() => {
+      expect(requests).toContainEqual({
+        method: "terminal.open",
+        params: { agentId: undefined, cols: 100, rows: 30, catalog },
+      });
+    });
+    await panel.updateComplete;
+    expect(panel.renderRoot.querySelector(".tp-tab")?.textContent).toContain("codex resume 0d5c…");
   });
 
   it("fullscreen mode auto-opens without dock chrome and survives last-tab close", async () => {

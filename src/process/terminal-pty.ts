@@ -1,22 +1,18 @@
-// Thin, resize-capable PTY wrapper for the operator terminal.
-//
-// The process supervisor's PTY adapter is shaped for one-shot managed runs and
-// hides resize; the operator terminal needs a long-lived, interactive handle, so
-// it owns this narrow loader instead of reshaping the supervisor contract.
 import type { IPty } from "@lydell/node-pty";
-import { signalProcessTree } from "../../process/kill-tree.js";
+import { signalProcessTree } from "./kill-tree.js";
 
-/** Live PTY handle used by one operator terminal session. */
+/** Live PTY handle shared by gateway terminals and node-host commands. */
 export type TerminalPtyHandle = {
   pid: number;
-  write: (data: string) => void;
-  resize: (cols: number, rows: number) => void;
-  onData: (listener: (chunk: string) => void) => void;
-  onExit: (listener: (event: { exitCode: number; signal?: number }) => void) => void;
-  kill: (signal?: string) => void;
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  pause(): void;
+  resume(): void;
+  onData(listener: (chunk: string) => void): void;
+  onExit(listener: (event: { exitCode: number; signal?: number }) => void): void;
+  kill(signal?: string): void;
 };
 
-/** Spawns a PTY process and adapts it to the terminal session handle. */
 export async function spawnTerminalPty(params: {
   file: string;
   args: string[];
@@ -39,6 +35,8 @@ export async function spawnTerminalPty(params: {
     },
     write: (data) => pty.write(data),
     resize: (cols, rows) => pty.resize(cols, rows),
+    pause: () => pty.pause(),
+    resume: () => pty.resume(),
     onData: (listener) => {
       pty.onData(listener);
     },
@@ -49,9 +47,8 @@ export async function spawnTerminalPty(params: {
   } satisfies TerminalPtyHandle;
 }
 
-// node-pty's kill only signals the shell; commands it launched (a long-running
-// `npm install`, `sleep`, etc.) would survive close/disconnect/shutdown. Signal
-// the whole process tree instead, mirroring the process supervisor's PTY adapter.
+// A long-running child of the interactive shell must not survive terminal
+// close. Signal the process tree, matching the process supervisor contract.
 function killPtyTree(pty: Pick<IPty, "pid" | "kill">, signal?: string): void {
   const sig = (signal ?? "SIGKILL") as NodeJS.Signals;
   try {

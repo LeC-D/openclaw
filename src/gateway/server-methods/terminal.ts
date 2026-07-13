@@ -6,6 +6,7 @@ import {
   ErrorCodes,
   errorShape,
   formatValidationErrors,
+  type TerminalOpenParams,
   validateTerminalAttachParams,
   validateTerminalCloseParams,
   validateTerminalInputParams,
@@ -13,8 +14,15 @@ import {
   validateTerminalResizeParams,
   validateTerminalTextParams,
 } from "../../../packages/gateway-protocol/src/index.js";
+import type { SessionCatalogTerminalPlan } from "../../plugins/session-catalog.js";
 import { renderTerminalBufferText } from "../terminal/buffer-text.js";
-import { buildTerminalEnv } from "../terminal/launch.js";
+import {
+  buildTerminalEnv,
+  resolveTerminalSpawnPlan,
+  type TerminalLaunchPlan,
+} from "../terminal/launch.js";
+import { createNodeRelayBackend } from "../terminal/node-relay.js";
+import { resolveSessionCatalogProvider } from "./session-catalog.js";
 import type { GatewayRequestHandlerOptions, GatewayRequestHandlers } from "./types.js";
 
 function invalid(respond: GatewayRequestHandlerOptions["respond"], detail: string): void {
@@ -54,7 +62,7 @@ export const terminalHandlers: GatewayRequestHandlers = {
       respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, "terminal is not available"));
       return;
     }
-    const p = params as { agentId?: string; cols: number; rows: number };
+    const p = params as TerminalOpenParams;
     const launch = context.resolveTerminalLaunchPolicy(p.agentId);
     if (!launch.ok) {
       if (launch.block.kind === "disabled") {
@@ -81,15 +89,111 @@ export const terminalHandlers: GatewayRequestHandlers = {
       return;
     }
 
+    let spawnPlan = resolveTerminalSpawnPlan(launch.plan);
+    let title: string | undefined;
+    let createBackend: (() => ReturnType<typeof createNodeRelayBackend>) | undefined;
+    if (p.catalog) {
+      const provider = resolveSessionCatalogProvider(p.catalog.catalogId);
+      if (!provider) {
+        respond(
+          false,
+          undefined,
+          errorShape(ErrorCodes.INVALID_REQUEST, `unknown session catalog: ${p.catalog.catalogId}`),
+        );
+        return;
+      }
+      if (!provider.openTerminal) {
+        respond(
+          false,
+          undefined,
+          errorShape(ErrorCodes.INVALID_REQUEST, "session catalog cannot open terminals"),
+        );
+        return;
+      }
+      let catalogPlan: SessionCatalogTerminalPlan;
+      try {
+        catalogPlan = await provider.openTerminal({
+          hostId: p.catalog.hostId,
+          threadId: p.catalog.threadId,
+        });
+      } catch (error) {
+        respond(
+          false,
+          undefined,
+          errorShape(
+            ErrorCodes.INVALID_REQUEST,
+            error instanceof Error ? error.message : "catalog terminal open failed",
+          ),
+        );
+        return;
+      }
+      title = catalogPlan.title;
+      if (catalogPlan.kind === "local") {
+        if (catalogPlan.argv.length === 0) {
+          invalid(respond, "catalog terminal plan has no command");
+          return;
+        }
+        const commandPlan: TerminalLaunchPlan = {
+          ...launch.plan,
+          initialCommand: catalogPlan.argv,
+          cwdOverride: catalogPlan.cwd,
+        };
+        spawnPlan = resolveTerminalSpawnPlan(commandPlan);
+      } else {
+        const node = context.nodeRegistry.get(catalogPlan.nodeId);
+        if (!node) {
+          respond(
+            false,
+            undefined,
+            errorShape(ErrorCodes.UNAVAILABLE, "catalog terminal node is not connected"),
+          );
+          return;
+        }
+        if (!node.commands.includes(catalogPlan.command)) {
+          respond(
+            false,
+            undefined,
+            errorShape(ErrorCodes.UNAVAILABLE, "catalog terminal command is not available"),
+          );
+          return;
+        }
+        let nodeParams: Record<string, unknown>;
+        try {
+          const parsed = JSON.parse(catalogPlan.paramsJSON) as unknown;
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+            throw new Error("invalid params");
+          }
+          nodeParams = { ...(parsed as Record<string, unknown>), cols: p.cols, rows: p.rows };
+        } catch {
+          invalid(respond, "catalog terminal plan has invalid params");
+          return;
+        }
+        spawnPlan = {
+          agentId: launch.plan.agentId,
+          cwd: catalogPlan.cwd ?? launch.plan.cwd,
+          shell: catalogPlan.title ?? catalogPlan.command,
+          args: [],
+        };
+        createBackend = async () =>
+          await createNodeRelayBackend({
+            registry: context.nodeRegistry,
+            nodeId: catalogPlan.nodeId,
+            command: catalogPlan.command,
+            params: nodeParams,
+          });
+      }
+    }
+
     const outcome = await manager.open({
       connId,
-      agentId: launch.plan.agentId,
-      cwd: launch.plan.cwd,
-      shell: launch.plan.shell,
-      args: launch.plan.args,
+      agentId: spawnPlan.agentId,
+      cwd: spawnPlan.cwd,
+      shell: spawnPlan.shell,
+      args: spawnPlan.args,
       cols: p.cols,
       rows: p.rows,
       env: buildTerminalEnv(process.env),
+      ...(createBackend ? { createBackend } : {}),
     });
     if (!outcome.ok) {
       const code = outcome.code === "limit" ? ErrorCodes.INVALID_REQUEST : ErrorCodes.UNAVAILABLE;
@@ -105,6 +209,7 @@ export const terminalHandlers: GatewayRequestHandlers = {
       shell: outcome.shell,
       cwd: outcome.cwd,
       confined: false,
+      ...(title ? { title } : {}),
     });
   },
 
